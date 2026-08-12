@@ -1,0 +1,69 @@
+name: Laravel GitHub API
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  checks: write
+  statuses: write
+
+jobs:
+  laravel-test:
+    name: Composer and Laravel tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USER: ${{ secrets.MYSQL_USER || 'root' }}
+      DB_PASS: ${{ secrets.MYSQL_PASSWORD || 'root' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Composer dump-autoload
+        if: ${{ hashFiles('composer.json') != '' }}
+        run: composer dump-autoload
+
+      - name: Database setup and test
+        if: ${{ hashFiles('artisan') != '' }}
+        run: |
+          database="billing_${{ github.run_number }}"
+          echo "Creating database ${database}"
+          mysql -h "${DB_HOST}" -P "${DB_PORT}" -u "${DB_USER}" -p"${DB_PASS}" -e "DROP DATABASE IF EXISTS \`${database}\`; CREATE DATABASE \`${database}\`;"
+          php artisan optimize:clear
+          php artisan testing-setup --username="${DB_USER}" --****** --database="${database}"
+          COMPOSER_MEMORY_LIMIT=-1 php artisan test
+
+      - name: Drop test database
+        if: ${{ always() && hashFiles('artisan') != '' }}
+        run: |
+          database="billing_${{ github.run_number }}"
+          echo "Dropping database ${database}"
+          mysql -h "${DB_HOST}" -P "${DB_PORT}" -u "${DB_USER}" -p"${DB_PASS}" -e "DROP DATABASE IF EXISTS \`${database}\`;"

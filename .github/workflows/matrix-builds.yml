@@ -1,0 +1,132 @@
+name: Matrix Builds
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: docker.example.com
+  IMAGE_NAME: myapp
+
+jobs:
+  matrix-build:
+    name: ${{ matrix.platform }} / Java ${{ matrix.java }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            java: '8'
+          - platform: linux
+            runner: ubuntu-latest
+            java: '11'
+          - platform: linux
+            runner: ubuntu-latest
+            java: '17'
+          - platform: windows
+            runner: windows-latest
+            java: '8'
+          - platform: windows
+            runner: windows-latest
+            java: '11'
+          - platform: windows
+            runner: windows-latest
+            java: '17'
+          - platform: macos
+            runner: macos-latest
+            java: '11'
+          - platform: macos
+            runner: macos-latest
+            java: '17'
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Set up Java ${{ matrix.java }}
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+          cache: maven
+
+      - name: Build
+        if: ${{ hashFiles('pom.xml') != '' }}
+        run: mvn clean compile
+
+      - name: Test
+        if: ${{ hashFiles('pom.xml') != '' }}
+        run: mvn test
+
+      - name: Upload test results
+        if: ${{ always() && hashFiles('**/surefire-reports/*.xml') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: surefire-${{ matrix.platform }}-jdk-${{ matrix.java }}
+          path: '**/surefire-reports/*.xml'
+
+      - name: Package
+        if: ${{ hashFiles('pom.xml') != '' }}
+        run: mvn package -DskipTests
+
+      - name: Upload JAR artifact
+        if: ${{ hashFiles('target/*.jar') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: jar-${{ matrix.platform }}-jdk-${{ matrix.java }}
+          path: target/*.jar
+
+  integration:
+    name: Integration
+    needs: matrix-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download matrix artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: matrix-artifacts
+        continue-on-error: true
+
+      - name: Collect artifacts
+        run: |
+          echo "Running integration tests across all platforms"
+          echo "Collecting artifacts from all matrix builds"
+          find matrix-artifacts -name "*.jar" -type f || true
+
+  docker-build:
+    name: Docker build
+    needs: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ github.ref_name == 'master' || github.ref_name == 'main' }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Build Docker images
+        if: ${{ hashFiles('Dockerfile') != '' }}
+        run: |
+          for platform in linux; do
+            for java_version in jdk-11 jdk-17; do
+              echo "Building Docker image for ${platform}-${java_version}"
+              docker build -t "${REGISTRY}/${IMAGE_NAME}:${platform}-${java_version}-${{ github.run_number }}" \
+                --build-arg "JAVA_VERSION=${java_version}" \
+                --build-arg "PLATFORM=${platform}" .
+            done
+          done

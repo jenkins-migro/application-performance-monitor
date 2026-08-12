@@ -1,0 +1,35 @@
+name: Jenkins Server Inspection
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-runner:
+    name: Inspect runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Locate Docker
+        run: |
+          docker_path=$(command -v docker)
+          echo "Docker path: ${docker_path}"
+
+      - name: Show free memory
+        run: |
+          free_mem=$(free -m)
+          echo "Free memory: ${free_mem}"
+
+      - name: Print environment
+        run: env | sort

@@ -1,0 +1,42 @@
+name: Input File Archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_file_base64:
+        description: Base64-encoded input.csv content
+        required: true
+        type: string
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  process:
+    name: Decode and archive input file
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      INPUT_FILE: ${{ github.workspace }}/input.csv
+      INPUT_FILE_BASE64: ${{ inputs.input_file_base64 }}
+    steps:
+      - name: Decode input file
+        run: |
+          printf '%s' "${INPUT_FILE_BASE64}" | base64 --decode > "${INPUT_FILE}"
+          if [ -f "${INPUT_FILE}" ]; then
+            echo "File has been successfully decoded and saved to ${INPUT_FILE}"
+          else
+            echo "Failed to decode and save the file." >&2
+            exit 1
+          fi
+
+      - name: Upload input file
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: input-file
+          path: input.csv
+          if-no-files-found: error
